@@ -10,6 +10,11 @@
 -  **Fully mobile adopted.** Everything works just out of the box.
 -  **MUI v5 suport.** Instead MUI v4 in the original repo.
 
+![Example 1](https://github.com/GottliebGlob/candy-machine-ui/blob/main/example.png?raw=true "Example 1")
+
+![Example 2](https://github.com/GottliebGlob/candy-machine-ui/blob/main/example2.png?raw=true "Example 2")
+
+
 ## Installation
 
 #### 1. Fork the project & clone it. 
