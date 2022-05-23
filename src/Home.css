@@ -1,0 +1,12 @@
+.hovered-div {
+    transition: all 0.3s;
+    padding-bottom: 8px;
+    padding-top: 8px;
+    cursor: pointer;
+}
+
+
+.hovered-div:hover {
+    background-color: var(--card-background-color);
+
+}

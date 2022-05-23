@@ -1,0 +1,24 @@
+/* Customize your main colors in :root variables */
+:root {
+  --light-background-color: #2e3d4d;
+  --main-background-color: #131a21;
+  --dark-background-color: #0a0e11;
+  --title-text-color:#00d0c1;
+}
+
+body{
+background-color: var(--main-background-color);
+  font-family: 'Patrick Hand', cursive;
+  font-size: 1.1em;
+}
+
+h2, p{
+  color: var(--main-text-color);
+}
+
+h3{
+font-weight: normal;
+}
+
+
+
