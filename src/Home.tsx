@@ -1,28 +1,35 @@
-import React, {useEffect, useState} from "react";
-import confetti from "canvas-confetti";
-import * as anchor from "@project-serum/anchor";
-import {LAMPORTS_PER_SOL, PublicKey} from "@solana/web3.js";
-import {useAnchorWallet} from "@solana/wallet-adapter-react";
-import {GatewayProvider} from '@civic/solana-gateway-react';
+import {useCallback, useEffect, useMemo, useState} from "react";
 import Countdown from "react-countdown";
 import {Snackbar, Alert, Paper, Grid, useTheme, Container, Typography} from "@mui/material";
-import {toDate, AlertState, getAtaForMint} from './utils';
-import MintButton from './components/MintButton';
-import './Home.css'
-import {MainContainer,
-    ConnectButton,
-    FullWidthConnectButton,
-    Wallet,
-    WalletAmount,
-    WalletContainer,
-} from "./components/styled";
+
+import confetti from "canvas-confetti";
+import * as anchor from "@project-serum/anchor";
+
 import {
-    CandyMachine,
+    Commitment,
+    Connection,
+    PublicKey,
+    Transaction,
+    LAMPORTS_PER_SOL
+} from "@solana/web3.js";
+import {WalletAdapterNetwork} from '@solana/wallet-adapter-base';
+import {useWallet} from "@solana/wallet-adapter-react";
+import {WalletMultiButton} from "@solana/wallet-adapter-react-ui";
+import {GatewayProvider} from '@civic/solana-gateway-react';
+
+import {AlertState, getAtaForMint, toDate} from './utils';
+import {
     awaitTransactionSignatureConfirmation,
-    getCandyMachineState,
-    mintOneToken,
     CANDY_MACHINE_PROGRAM,
+    CandyMachineAccount,
+    createAccountsForMint,
+    getCandyMachineState,
+    getCollectionPDA,
+    mintOneToken,
+    SetupState,
 } from "./candy-machine";
+
+
 
 import nft_image from "./img/nft_image.gif"
 
@@ -31,25 +38,39 @@ import Info from "./components/Info";
 import CountDown from "./components/Countdown";
 import InactiveMintButton from "./components/InactiveMintButton";
 import ProgressBar from "./components/ProgressBar";
+import MintButton from './components/MintButton';
+
+import './Home.css'
+import {MainContainer,
+    ConnectButton,
+    FullWidthConnectButton,
+    Wallet,
+    WalletAmount,
+    WalletContainer,
+} from "./components/styled";
 
 import isMobile from "./components/isMobile"
 import {startDate, startWlDate, mintPrice, supply} from "./constants";
 
 
+const cluster = process.env.REACT_APP_SOLANA_NETWORK!.toString();
 const decimals = process.env.REACT_APP_SPL_TOKEN_TO_MINT_DECIMALS ? +process.env.REACT_APP_SPL_TOKEN_TO_MINT_DECIMALS!.toString() : 9;
 const splTokenName = process.env.REACT_APP_SPL_TOKEN_TO_MINT_NAME ? process.env.REACT_APP_SPL_TOKEN_TO_MINT_NAME.toString() : "TOKEN";
 
+
 export interface HomeProps {
-    candyMachineId: anchor.web3.PublicKey;
+    candyMachineId?: anchor.web3.PublicKey;
     connection: anchor.web3.Connection;
     txTimeout: number;
     rpcHost: string;
+    network: WalletAdapterNetwork;
 }
 
 export const MintPage = (props: HomeProps) => {
     const [balance, setBalance] = useState<number>();
     const [isMinting, setIsMinting] = useState(false); // true when user got to press MINT
     const [isActive, setIsActive] = useState(false); // true when countdown completes or whitelisted
+    const [solanaExplorerLink, setSolanaExplorerLink] = useState<string>("");
     const [itemsAvailable, setItemsAvailable] = useState(0);
     const [itemsRedeemed, setItemsRedeemed] = useState(0);
     const [itemsRemaining, setItemsRemaining] = useState(0);
@@ -65,10 +86,6 @@ export const MintPage = (props: HomeProps) => {
     const [endDate, setEndDate] = useState<Date>();
     const [isPresale, setIsPresale] = useState(false);
     const [isWLOnly, setIsWLOnly] = useState(false);
-    const [refreshFlag, setRefreshFlag] = useState(false)
-
-    const mobileMarker = isMobile()
-    const theme = useTheme()
 
     const [alertState, setAlertState] = useState<AlertState>({
         open: false,
@@ -76,137 +93,223 @@ export const MintPage = (props: HomeProps) => {
         severity: undefined,
     });
 
-    const wallet = useAnchorWallet();
-    const [candyMachine, setCandyMachine] = useState<CandyMachine>();
+    const [needTxnSplit, setNeedTxnSplit] = useState(true);
+    const [setupTxn, setSetupTxn] = useState<SetupState>();
+
+    const wallet = useWallet();
+    const [candyMachine, setCandyMachine] = useState<CandyMachineAccount>();
 
     const rpcUrl = props.rpcHost;
+    const solFeesEstimation = 0.012; // approx of account creation fees
 
-    const refreshCandyMachineState = () => {
-        (async () => {
-            if (!wallet) return;
+    const anchorWallet = useMemo(() => {
+        if (
+            !wallet ||
+            !wallet.publicKey ||
+            !wallet.signAllTransactions ||
+            !wallet.signTransaction
+        ) {
+            return;
+        }
 
-            const cndy = await getCandyMachineState(
-                wallet as anchor.Wallet,
-                props.candyMachineId,
-                props.connection
-            );
-            setCandyMachine(cndy);
-            setItemsAvailable(cndy.state.itemsAvailable);
-            setItemsRemaining(cndy.state.itemsRemaining);
-            let tempItems = itemsRedeemed
-            setItemsRedeemed(cndy.state.itemsRedeemed >= tempItems ? cndy.state.itemsRedeemed : tempItems);
+        return {
+            publicKey: wallet.publicKey,
+            signAllTransactions: wallet.signAllTransactions,
+            signTransaction: wallet.signTransaction,
+        } as anchor.Wallet;
+    }, [wallet]);
 
-            var divider = 1;
-            if (decimals) {
-                divider = +('1' + new Array(decimals).join('0').slice() + '0');
+    const refreshCandyMachineState = useCallback(
+        async (commitment: Commitment = 'confirmed') => {
+            if (!anchorWallet) {
+                return;
             }
 
-            // detect if using spl-token to mint
-            if (cndy.state.tokenMint) {
-                setPayWithSplToken(true);
-                // Customize your SPL-TOKEN Label HERE
-                // TODO: get spl-token metadata name
-                setPriceLabel(splTokenName);
-                setPrice(cndy.state.price.toNumber() / divider);
-                setWhitelistPrice(cndy.state.price.toNumber() / divider);
-            }else {
-                setPrice(cndy.state.price.toNumber() / LAMPORTS_PER_SOL);
-                setWhitelistPrice(cndy.state.price.toNumber() / LAMPORTS_PER_SOL);
-            }
+            const connection = new Connection(props.rpcHost, commitment);
 
-
-            // fetch whitelist token balance
-            if (cndy.state.whitelistMintSettings) {
-                setWhitelistEnabled(true);
-                setIsBurnToken(cndy.state.whitelistMintSettings.mode.burnEveryTime);
-                setIsPresale(cndy.state.whitelistMintSettings.presale);
-                setIsWLOnly(!isPresale && cndy.state.whitelistMintSettings.discountPrice === null);
-
-                if (cndy.state.whitelistMintSettings.discountPrice !== null && cndy.state.whitelistMintSettings.discountPrice !== cndy.state.price) {
-                    if (cndy.state.tokenMint) {
-                        setWhitelistPrice(cndy.state.whitelistMintSettings.discountPrice?.toNumber() / divider);
-                    } else {
-                        setWhitelistPrice(cndy.state.whitelistMintSettings.discountPrice?.toNumber() / LAMPORTS_PER_SOL);
-                    }
-                }
-
-                let balance = 0;
+            if (props.candyMachineId) {
                 try {
-                    const tokenBalance =
-                        await props.connection.getTokenAccountBalance(
-                            (
-                                await getAtaForMint(
-                                    cndy.state.whitelistMintSettings.mint,
-                                    wallet.publicKey,
-                                )
-                            )[0],
+                    const cndy = await getCandyMachineState(
+                        anchorWallet,
+                        props.candyMachineId,
+                        connection,
+                    );
+
+                    setCandyMachine(cndy);
+                    setItemsAvailable(cndy.state.itemsAvailable);
+                    setItemsRemaining(cndy.state.itemsRemaining);
+                    setItemsRedeemed(cndy.state.itemsRedeemed);
+
+                    var divider = 1;
+                    if (decimals) {
+                        divider = +('1' + new Array(decimals).join('0').slice() + '0');
+                    }
+
+                    // detect if using spl-token to mint
+                    if (cndy.state.tokenMint) {
+                        setPayWithSplToken(true);
+                        // Customize your SPL-TOKEN Label HERE
+                        // TODO: get spl-token metadata name
+                        setPriceLabel(splTokenName);
+                        setPrice(cndy.state.price.toNumber() / divider);
+                        setWhitelistPrice(cndy.state.price.toNumber() / divider);
+                    } else {
+                        setPrice(cndy.state.price.toNumber() / LAMPORTS_PER_SOL);
+                        setWhitelistPrice(cndy.state.price.toNumber() / LAMPORTS_PER_SOL);
+                    }
+
+
+                    // fetch whitelist token balance
+                    if (cndy.state.whitelistMintSettings) {
+                        setWhitelistEnabled(true);
+                        setIsBurnToken(cndy.state.whitelistMintSettings.mode.burnEveryTime);
+                        setIsPresale(cndy.state.whitelistMintSettings.presale);
+                        setIsWLOnly(!isPresale && cndy.state.whitelistMintSettings.discountPrice === null);
+
+                        if (cndy.state.whitelistMintSettings.discountPrice !== null && cndy.state.whitelistMintSettings.discountPrice !== cndy.state.price) {
+                            if (cndy.state.tokenMint) {
+                                setWhitelistPrice(cndy.state.whitelistMintSettings.discountPrice?.toNumber() / divider);
+                            } else {
+                                setWhitelistPrice(cndy.state.whitelistMintSettings.discountPrice?.toNumber() / LAMPORTS_PER_SOL);
+                            }
+                        }
+
+                        let balance = 0;
+                        try {
+                            const tokenBalance =
+                                await props.connection.getTokenAccountBalance(
+                                    (
+                                        await getAtaForMint(
+                                            cndy.state.whitelistMintSettings.mint,
+                                            anchorWallet.publicKey,
+                                        )
+                                    )[0],
+                                );
+
+                            balance = tokenBalance?.value?.uiAmount || 0;
+                        } catch (e) {
+                            console.error(e);
+                            balance = 0;
+                        }
+                        if (commitment !== "processed") {
+                            setWhitelistTokenBalance(balance);
+                        }
+                        setIsActive(isPresale && !isEnded && balance > 0);
+
+                    } else {
+                        setWhitelistEnabled(false);
+                    }
+
+                    // end the mint when date is reached
+                    if (cndy?.state.endSettings?.endSettingType.date) {
+                        setEndDate(toDate(cndy.state.endSettings.number));
+                        if (
+                            cndy.state.endSettings.number.toNumber() <
+                            new Date().getTime() / 1000
+                        ) {
+                            setIsEnded(true);
+                            setIsActive(false);
+                        }
+                    }
+                    // end the mint when amount is reached
+                    if (cndy?.state.endSettings?.endSettingType.amount) {
+                        let limit = Math.min(
+                            cndy.state.endSettings.number.toNumber(),
+                            cndy.state.itemsAvailable,
                         );
+                        setItemsAvailable(limit);
+                        if (cndy.state.itemsRedeemed < limit) {
+                            setItemsRemaining(limit - cndy.state.itemsRedeemed);
+                        } else {
+                            setItemsRemaining(0);
+                            cndy.state.isSoldOut = true;
+                            setIsEnded(true);
+                        }
+                    } else {
+                        setItemsRemaining(cndy.state.itemsRemaining);
+                    }
 
-                    balance = tokenBalance?.value?.uiAmount || 0;
+                    if (cndy.state.isSoldOut) {
+                        setIsActive(false);
+                    }
+
+                    const [collectionPDA] = await getCollectionPDA(props.candyMachineId);
+                    const collectionPDAAccount = await connection.getAccountInfo(
+                        collectionPDA,
+                    );
+
+                    const txnEstimate =
+                        892 +
+                        (!!collectionPDAAccount && cndy.state.retainAuthority ? 182 : 0) +
+                        (cndy.state.tokenMint ? 66 : 0) +
+                        (cndy.state.whitelistMintSettings ? 34 : 0) +
+                        (cndy.state.whitelistMintSettings?.mode?.burnEveryTime ? 34 : 0) +
+                        (cndy.state.gatekeeper ? 33 : 0) +
+                        (cndy.state.gatekeeper?.expireOnUse ? 66 : 0);
+
+                    setNeedTxnSplit(txnEstimate > 1230);
                 } catch (e) {
-                    console.error(e);
-                    balance = 0;
-                }
-                setWhitelistTokenBalance(balance);
-                setIsActive(isPresale && !isEnded && balance > 0);
-            } else {
-                setWhitelistEnabled(false);
-            }
-
-            // end the mint when date is reached
-            if (cndy?.state.endSettings?.endSettingType.date) {
-                setEndDate(toDate(cndy.state.endSettings.number));
-                if (
-                    cndy.state.endSettings.number.toNumber() <
-                    new Date().getTime() / 1000
-                ) {
-                    setIsEnded(true);
-                    setIsActive(false);
-                }
-            }
-            // end the mint when amount is reached
-            if (cndy?.state.endSettings?.endSettingType.amount) {
-                let limit = Math.min(
-                    cndy.state.endSettings.number.toNumber(),
-                    cndy.state.itemsAvailable,
-                );
-                setItemsAvailable(limit);
-                if (cndy.state.itemsRedeemed < limit) {
-                    setItemsRemaining(limit - cndy.state.itemsRedeemed);
-                } else {
-                    setItemsRemaining(0);
-                    cndy.state.isSoldOut = true;
-                    setIsEnded(true);
+                    if (e instanceof Error) {
+                        if (
+                            e.message === `Account does not exist ${props.candyMachineId}`
+                        ) {
+                            setAlertState({
+                                open: true,
+                                message: `Couldn't fetch candy machine state from candy machine with address: ${props.candyMachineId}, using rpc: ${props.rpcHost}! You probably typed the REACT_APP_CANDY_MACHINE_ID value in wrong in your .env file, or you are using the wrong RPC!`,
+                                severity: 'error',
+                                hideDuration: null,
+                            });
+                        } else if (
+                            e.message.startsWith('failed to get info about account')
+                        ) {
+                            setAlertState({
+                                open: true,
+                                message: `Couldn't fetch candy machine state with rpc: ${props.rpcHost}! This probably means you have an issue with the REACT_APP_SOLANA_RPC_HOST value in your .env file, or you are not using a custom RPC!`,
+                                severity: 'error',
+                                hideDuration: null,
+                            });
+                        }
+                    } else {
+                        setAlertState({
+                            open: true,
+                            message: `${e}`,
+                            severity: 'error',
+                            hideDuration: null,
+                        });
+                    }
+                    console.log(e);
                 }
             } else {
-                setItemsRemaining(cndy.state.itemsRemaining);
+                setAlertState({
+                    open: true,
+                    message: `Your REACT_APP_CANDY_MACHINE_ID value in the .env file doesn't look right! Make sure you enter it in as plain base-58 address!`,
+                    severity: 'error',
+                    hideDuration: null,
+                });
             }
-
-            if (cndy.state.isSoldOut) {
-                setIsActive(false);
-            }
-        })();
-    };
-
-    const renderGoLiveDateCounter = ({days, hours, minutes, seconds}: any) => {
-        return <CountDown days={days} hours={hours} minutes={minutes} seconds={seconds}/>
-    };
+        },
+        [anchorWallet, props.candyMachineId, props.rpcHost, isEnded, isPresale, props.connection],
+    );
 
 
-    function displaySuccess(): void {
-        let remaining = itemsRemaining - 1;
+    function displaySuccess(mintPublicKey: any, qty: number = 1): void {
+        let remaining = itemsRemaining - qty;
         setItemsRemaining(remaining);
         setIsSoldOut(remaining === 0);
         if (isBurnToken && whitelistTokenBalance && whitelistTokenBalance > 0) {
-            let balance = whitelistTokenBalance - 1;
+            let balance = whitelistTokenBalance - qty;
             setWhitelistTokenBalance(balance);
             setIsActive(isPresale && !isEnded && balance > 0);
         }
-        setItemsRedeemed(itemsRedeemed + 1);
-        const solFeesEstimation = 0.012; // approx
+        setSetupTxn(undefined);
+        setItemsRedeemed(itemsRedeemed + qty);
         if (!payWithSplToken && balance && balance > 0) {
-            setBalance(balance - (whitelistEnabled ? whitelistPrice : price) - solFeesEstimation);
+            setBalance(balance - ((whitelistEnabled ? whitelistPrice : price) * qty) - solFeesEstimation);
         }
+        setSolanaExplorerLink(cluster === "devnet" || cluster === "testnet"
+            ? ("https://solscan.io/token/" + mintPublicKey + "?cluster=" + cluster)
+            : ("https://solscan.io/token/" + mintPublicKey));
+        setIsMinting(false);
         throwConfetti();
     };
 
@@ -218,27 +321,81 @@ export const MintPage = (props: HomeProps) => {
         });
     }
 
-    const onMint = async () => {
+    const onMint = async (
+        beforeTransactions: Transaction[] = [],
+        afterTransactions: Transaction[] = [],
+    ) => {
         try {
-            setIsMinting(true);
-            if (wallet && candyMachine?.program && wallet.publicKey) {
-                const mint = anchor.web3.Keypair.generate();
-                const mintTxId = (
-                    await mintOneToken(candyMachine, wallet.publicKey, mint)
-                )[0];
-
-                let status: any = {err: true};
-                if (mintTxId) {
-                    status = await awaitTransactionSignatureConfirmation(
-                        mintTxId,
-                        props.txTimeout,
-                        props.connection,
-                        'singleGossip',
-                        true,
+            if (wallet.connected && candyMachine?.program && wallet.publicKey) {
+                setIsMinting(true);
+                let setupMint: SetupState | undefined;
+                if (needTxnSplit && setupTxn === undefined) {
+                    setAlertState({
+                        open: true,
+                        message: 'Please validate account setup transaction',
+                        severity: 'info',
+                    });
+                    setupMint = await createAccountsForMint(
+                        candyMachine,
+                        wallet.publicKey,
                     );
+                    let status: any = {err: true};
+                    if (setupMint.transaction) {
+                        status = await awaitTransactionSignatureConfirmation(
+                            setupMint.transaction,
+                            props.txTimeout,
+                            props.connection,
+                            true,
+                        );
+                    }
+                    if (status && !status.err) {
+                        setSetupTxn(setupMint);
+                        setAlertState({
+                            open: true,
+                            message:
+                                'Setup transaction succeeded! You can now validate mint transaction',
+                            severity: 'info',
+                        });
+                    } else {
+                        setAlertState({
+                            open: true,
+                            message: 'Mint failed! Please try again!',
+                            severity: 'error',
+                        });
+                        return;
+                    }
                 }
 
-                if (!status?.err) {
+                const setupState = setupMint ?? setupTxn;
+                const mint = setupState?.mint ?? anchor.web3.Keypair.generate();
+                let mintResult = await mintOneToken(
+                    candyMachine,
+                    wallet.publicKey,
+                    mint,
+                    beforeTransactions,
+                    afterTransactions,
+                    setupState,
+                );
+
+                let status: any = {err: true};
+                let metadataStatus = null;
+                if (mintResult) {
+                    status = await awaitTransactionSignatureConfirmation(
+                        mintResult.mintTxId,
+                        props.txTimeout,
+                        props.connection,
+                        true,
+                    );
+
+                    metadataStatus =
+                        await candyMachine.program.provider.connection.getAccountInfo(
+                            mintResult.metadataKey,
+                            'processed',
+                        );
+                    console.log('Metadata status: ', !!metadataStatus);
+                }
+
+                if (status && !status.err && metadataStatus) {
                     setAlertState({
                         open: true,
                         message: 'Congratulations! Mint succeeded!',
@@ -246,17 +403,27 @@ export const MintPage = (props: HomeProps) => {
                     });
 
                     // update front-end amounts
-                    displaySuccess();
+                    displaySuccess(mint.publicKey);
+                    refreshCandyMachineState('processed');
+                } else if (status && !status.err) {
+                    setAlertState({
+                        open: true,
+                        message:
+                            'Mint likely failed! Anti-bot SOL 0.01 fee potentially charged! Check the explorer to confirm the mint failed and if so, make sure you are eligible to mint before trying again.',
+                        severity: 'error',
+                        hideDuration: 8000,
+                    });
+                    refreshCandyMachineState();
                 } else {
                     setAlertState({
                         open: true,
                         message: 'Mint failed! Please try again!',
                         severity: 'error',
                     });
+                    refreshCandyMachineState();
                 }
             }
         } catch (error: any) {
-            // TODO: blech:
             let message = error.msg || 'Minting failed! Please try again!';
             if (!error.msg) {
                 if (!error.message) {
@@ -285,35 +452,34 @@ export const MintPage = (props: HomeProps) => {
         }
     };
 
-
     useEffect(() => {
         (async () => {
-            if (wallet) {
-                const balance = await props.connection.getBalance(wallet.publicKey);
+            if (anchorWallet) {
+                const balance = await props.connection.getBalance(anchorWallet!.publicKey);
                 setBalance(balance / LAMPORTS_PER_SOL);
             }
         })();
-    }, [wallet, props.connection]);
+    }, [anchorWallet, props.connection]);
 
-    useEffect(refreshCandyMachineState, [
-        wallet,
+    useEffect(() => {
+        refreshCandyMachineState();
+    }, [
+        anchorWallet,
         props.candyMachineId,
         props.connection,
         isEnded,
         isPresale,
-        refreshFlag
+        refreshCandyMachineState
     ]);
 
 
-    useEffect(
-        () => {
-            let timer1 = setInterval(() => setRefreshFlag(!refreshFlag), 5000);
-            return () => {
-                clearInterval(timer1);
-            };
-        },
-        [refreshFlag]
-    );
+
+    const mobileMarker = isMobile()
+    const theme = useTheme()
+
+    const renderGoLiveDateCounter = ({days, hours, minutes, seconds}: any) => {
+        return <CountDown days={days} hours={hours} minutes={minutes} seconds={seconds}/>
+    };
 
 
 

@@ -1,6 +1,7 @@
 # Intoduction
 **candy-machine-ui** is a fork of [Fulgurus/candy-machine-v2-responsive-ui](https://github.com/pandao/editor.md "link") repo.
 
+**Up-to-date with metaplex from v1.1.** 
 ## Features
 
 - **Auto refresh.** Every few seconds ui is updated, This allows you to track the amount of minted NFTs in real time.  
