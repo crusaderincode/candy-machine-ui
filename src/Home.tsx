@@ -86,6 +86,7 @@ export const MintPage = (props: HomeProps) => {
     const [endDate, setEndDate] = useState<Date>();
     const [isPresale, setIsPresale] = useState(false);
     const [isWLOnly, setIsWLOnly] = useState(false);
+    const [refreshFlag, setRefreshFlag] = useState(false)
 
     const [alertState, setAlertState] = useState<AlertState>({
         open: false,
@@ -469,9 +470,19 @@ export const MintPage = (props: HomeProps) => {
         props.connection,
         isEnded,
         isPresale,
-        refreshCandyMachineState
+        refreshCandyMachineState,
+        refreshFlag
     ]);
 
+    useEffect(
+        () => {
+            let timer1 = setInterval(() => setRefreshFlag(!refreshFlag), 5000);
+            return () => {
+                clearInterval(timer1);
+            };
+        },
+        [refreshFlag]
+    );
 
 
     const mobileMarker = isMobile()
