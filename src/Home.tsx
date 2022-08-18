@@ -501,7 +501,10 @@ export const MintPage = (props: HomeProps) => {
             width: window.innerWidth > 530 ? '100%' : window.innerWidth * 0.99,
             overflowX: 'hidden',
             height: '100%',
-            minHeight: '100vh'
+            minHeight: '100vh',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
         }}>
             <MainContainer style={{
                 marginTop: 50,
@@ -522,16 +525,16 @@ export const MintPage = (props: HomeProps) => {
 
 
 
-                {wallet && isActive && whitelistEnabled && (whitelistTokenBalance > 0) && isBurnToken &&
+                {wallet && isActive && whitelistEnabled && (whitelistTokenBalance > 0) &&
                 <Typography variant={mobileMarker ? "h4" : 'h3'} style={{
                     color: '#fff',
                     fontFamily: 'Main',
                     fontWeight: 'bold',
-                }}>You are whitelisted</Typography>}
+                    marginBottom: 10
+                }}>You are whitelisted!</Typography>}
 
                 <Container maxWidth="md">
                     <Paper style={{
-                        marginTop: mobileMarker ? '4rem' : '3rem',
                         paddingTop: '1rem',
                         paddingLeft: '1rem',
                         paddingRight: 0,

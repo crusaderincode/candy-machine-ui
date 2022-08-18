@@ -1,5 +1,5 @@
 # Intoduction
-**candy-machine-ui** is a fork of [Fulgurus/candy-machine-v2-responsive-ui](https://github.com/pandao/editor.md "link") repo.
+**candy-machine-ui** is a fork of [Fulgurus/candy-machine-v2-responsive-ui](https://github.com/Fulgurus/candy-machine-v2-responsive-ui "link") repo.
 
 **Up-to-date with metaplex from v1.1.** 
 ## Features
@@ -118,7 +118,7 @@ export const startWlDate = new Date("19 May 2022 16:00:00 GMT")
   
  - #### Set mint price :
   ```
-export const mintPrice = '0.1'
+export const mintPrice = '0.1 SOL'
    ```
 - #### Set supply :
  ```

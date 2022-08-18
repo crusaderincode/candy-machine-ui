@@ -28,7 +28,7 @@ export const ProgressBar = (props: Progress) => {
             }}>
                 Minted
             <Typography display="inline" variant="h5" style={{
-                color: '#ff00b2',
+                color: theme.palette.primary.contrastText,
                 fontFamily: 'Main',
                 fontWeight: 'bold',
                 textAlign: 'center',
