@@ -139,7 +139,9 @@ export const MintPage = (props: HomeProps) => {
                     setCandyMachine(cndy);
                     setItemsAvailable(cndy.state.itemsAvailable);
                     setItemsRemaining(cndy.state.itemsRemaining);
-                    setItemsRedeemed(cndy.state.itemsRedeemed);
+                    let tempItems = itemsRedeemed
+                    setItemsRedeemed(cndy.state.itemsRedeemed >= tempItems ? cndy.state.itemsRedeemed : tempItems);
+                   
 
                     var divider = 1;
                     if (decimals) {
