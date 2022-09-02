@@ -1,7 +1,7 @@
 /* Customize your main colors in :root variables */
 :root {
   --light-background-color: #2e3d4d;
-  --main-background-color: #131a21;
+  --main-background-color: #1e1e1e;
   --dark-background-color: #0a0e11;
   --title-text-color:#00d0c1;
 }
